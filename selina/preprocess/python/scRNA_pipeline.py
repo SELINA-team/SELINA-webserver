@@ -19,6 +19,14 @@ def preprocess_parser(subparsers):
                              choices=["h5", "mtx", "plain"],
                              help="Format of the count matrix file.")
     group_input.add_argument(
+        "--mode",
+        dest="mode",
+        choices=["single", "cluster"],
+        required=True,
+        help=
+        "The input expression file for preprocessing is single-cell level or cluster level."
+    )
+    group_input.add_argument(
         "--matrix",
         dest="matrix",
         default="",
@@ -140,20 +148,12 @@ def preprocess_parser(subparsers):
                               dest="outprefix",
                               default="query",
                               help="Prefix of output files. DEFAULT: query.")
-    group_output.add_argument(
-        "--mode",
-        dest="mode",
-        choices=["single", "cluster", 'both'],
-        required=True,
-        help=
-        "Output expression file for prediction. single: single-cell level. cluster: cluster level. both: output both the single-cell level and cluster level expression profiles"
-    )
 
 
 # Generate Rscript
 def GenerateRscript(count_file, gene_idtype, assembly, cell_cutoff, mito,
                     mito_cutoff, variable_genes, npcs, cluster_res, outprefix,
-                    directory, mode):
+                    directory, mode, separator):
 
     rfile = os.path.join(directory, "%s.R" % (outprefix))
     outf = open(rfile, "w")
@@ -162,88 +162,140 @@ def GenerateRscript(count_file, gene_idtype, assembly, cell_cutoff, mito,
     rsrcPath = os.path.split(os.path.split(
         os.path.abspath(__file__))[0])[0] + '/r'
 
-    #========load package========
-    script = '''# load package
-        suppressMessages(library(Seurat))
-        suppressMessages(library(ggplot2))
-        suppressMessages(library(dplyr))
-        suppressMessages(library(data.table))
-        suppressMessages(library(presto))
-        source("%s/RNARunSeurat.R")
-        source('%s/RNAAssemblyConvert.R')
-        source('%s/RNAEnsemblToSymbol.R')
-        source('%s/FindMarkersMAESTRO.R')
-    ''' % (rsrcPath, rsrcPath, rsrcPath, rsrcPath)
-    outf.write(script)
-
-    #========assembly conversion and gene id conversion========
-    script = '''
-        # read data
-        expr = Read10X_h5("%s")
-    ''' % (count_file)
-    outf.write(script)
-
-    if assembly == "GRCh37":
-        if gene_idtype == "symbol":
-            script = '''
-                # assembly conversion
-                expr = RNAAssemblyConvert(expr, from = "GRCh37", to = "GRCh38", dataPath = "%s")
-            ''' % (refGenePath)
-        elif gene_idtype == "ensembl":
-            script = '''
-                # gene id conversion
-                expr = RNAEnsemblToSymbol(expr, assembly = "GRCh37", dataPath = "%s")
-                expr = RNAAssemblyConvert(expr, from = "GRCh37", to = "GRCh38", dataPath = "%s")
-            ''' % (refGenePath, refGenePath)
+    if mode == 'single':
+        #========load package========
+        script = '''# load package
+            suppressMessages(library(Seurat))
+            suppressMessages(library(ggplot2))
+            suppressMessages(library(dplyr))
+            suppressMessages(library(data.table))
+            suppressMessages(library(presto))
+            source("%s/RNARunSeurat.R")
+            source('%s/RNAAssemblyConvert.R')
+            source('%s/RNAEnsemblToSymbol.R')
+            source('%s/FindMarkersMAESTRO.R')
+        ''' % (rsrcPath, rsrcPath, rsrcPath, rsrcPath)
+        outf.write(script)
+        #========assembly conversion and gene id conversion========
+        script = '''
+            # read data
+            expr = Read10X_h5("%s")
+        ''' % (count_file)
         outf.write(script)
 
-    elif assembly == "GRCh38":
-        if gene_idtype == "ensembl":
-            script = '''
-                # gene id conversion
-                expr = RNAEnsemblToSymbol(expr, assembly = "GRCh38", dataPath = "%s")
-            ''' % (refGenePath)
+        if assembly == "GRCh37":
+            if gene_idtype == "symbol":
+                script = '''
+                    # assembly conversion
+                    expr = RNAAssemblyConvert(expr, from = "GRCh37", to = "GRCh38", dataPath = "%s")
+                ''' % (refGenePath)
+            elif gene_idtype == "ensembl":
+                script = '''
+                    # gene id conversion
+                    expr = RNAEnsemblToSymbol(expr, assembly = "GRCh37", dataPath = "%s")
+                    expr = RNAAssemblyConvert(expr, from = "GRCh37", to = "GRCh38", dataPath = "%s")
+                ''' % (refGenePath, refGenePath)
             outf.write(script)
 
+        elif assembly == "GRCh38":
+            if gene_idtype == "ensembl":
+                script = '''
+                    # gene id conversion
+                    expr = RNAEnsemblToSymbol(expr, assembly = "GRCh38", dataPath = "%s")
+                ''' % (refGenePath)
+                outf.write(script)
 
-#========analysis========
-    if mito:
-        mito = 'TRUE'
+
+    #========analysis========
+        if mito:
+            mito = 'TRUE'
+        else:
+            mito = 'FALSE'
+
+        script = '''
+            # clustering
+            RNA.res = RNARunSeurat(inputMat = expr, 
+                                project = "%s", 
+                                min.c = %d,
+                                mito = as.logical("%s"),
+                                mito.cutoff = %f,
+                                variable.genes = %d, 
+                                npcs = %d,
+                                cluster.res = %f,
+                                outdir = "%s",
+                                outprefix = "%s")
+        ''' % (outprefix, cell_cutoff, mito, mito_cutoff, variable_genes, npcs,
+            cluster_res, directory, outprefix)
+        outf.write(script)
+
+        #========save seurat object========
+        script = '''
+            if (is.list(RNA.res)){
+                # save object
+                saveRDS(RNA.res[[1]], "%s_res.rds")
+                # output differentially expressed genes
+                write.table(RNA.res[[2]], file.path("%s", paste0("%s", "_cluster_DiffGenes.tsv")), quote = FALSE, sep = "\t", row.names = FALSE)
+            } else {
+                saveRDS(RNA.res, "%s_res.rds")
+            }
+        ''' % (os.path.join(directory, outprefix), directory, outprefix,
+            os.path.join(directory, outprefix))
+        outf.write(script)
+
     else:
-        mito = 'FALSE'
+        #========load package========
+        script = '''# load package
+            suppressMessages(library(data.table))
+            source('%s/RNAAssemblyConvert.R')
+            source('%s/RNAEnsemblToSymbol.R')
+        ''' % (rsrcPath, rsrcPath)
+        outf.write(script)
+        #========load data========
+        script = '''
+            # read data
+            if ("%s" == "tab"){
+                separator = "\t"
+            } else if ("%s" == "space"){
+                separator = " "
+            } else {
+                separator = ","
+            }
+            expr = read.table("%s",header=TRUE,sep=separator,check.names=FALSE)
+        ''' % (separator,separator,count_file)
+        outf.write(script)
+        #========assembly conversion and gene id conversion========
+        if assembly == "GRCh37":
+            if gene_idtype == "symbol":
+                script = '''
+                    # assembly conversion
+                    expr = RNAAssemblyConvert(expr, from = "GRCh37", to = "GRCh38", dataPath = "%s")
+                ''' % (refGenePath)
+            elif gene_idtype == "ensembl":
+                script = '''
+                    # gene id conversion
+                    expr = RNAEnsemblToSymbol(expr, assembly = "GRCh37", dataPath = "%s")
+                    expr = RNAAssemblyConvert(expr, from = "GRCh37", to = "GRCh38", dataPath = "%s")
+                ''' % (refGenePath, refGenePath)
+            outf.write(script)
 
-    script = '''
-        # clustering
-        RNA.res = RNARunSeurat(inputMat = expr, 
-                            project = "%s", 
-                            min.c = %d,
-                            mito = as.logical("%s"),
-                            mito.cutoff = %f,
-                            variable.genes = %d, 
-                            npcs = %d,
-                            cluster.res = %f,
-                            outdir = "%s",
-                            mode = "%s",
-                            outprefix = "%s")
-    ''' % (outprefix, cell_cutoff, mito, mito_cutoff, variable_genes, npcs,
-           cluster_res, directory, mode, outprefix)
-    outf.write(script)
-
-    #========save seurat object========
-    script = '''
-        if (is.list(RNA.res)){
-            # save object
-            saveRDS(RNA.res[[1]], "%s_res.rds")
-            # output differentially expressed genes
-            write.table(RNA.res[[2]], file.path("%s", paste0("%s", "_cluster_DiffGenes.tsv")), quote = FALSE, sep = "\t", row.names = FALSE)
-        } else {
-            saveRDS(RNA.res, "%s_res.rds")
-        }
-    ''' % (os.path.join(directory, outprefix), directory, outprefix,
-           os.path.join(directory, outprefix))
-    outf.write(script)
-
-    #========finish srcipt output========
+        elif assembly == "GRCh38":
+            if gene_idtype == "ensembl":
+                script = '''
+                    # gene id conversion
+                    expr = RNAEnsemblToSymbol(expr, assembly = "GRCh38", dataPath = "%s")
+                ''' % (refGenePath)
+                outf.write(script)
+        #========output expr matrix========
+        script = '''
+            expr <- as.data.frame(expr)
+            colnames(expr) <- paste0('Cluster_',colnames(expr))
+            genes <- as.data.frame(rownames(expr))
+            colnames(genes) <- 'Gene'
+            expr <- cbind(genes, expr)
+            fwrite(expr, file.path("%s", paste0("%s", "_cluster_expr.txt")), row.names = FALSE, col.names = TRUE, sep = '\t', quote = FALSE)
+        ''' % (directory, outprefix)
+        outf.write(script)
+            #========finish srcipt output========
     outf.close()
     return os.path.abspath(rfile)
 
@@ -259,17 +311,23 @@ def query_preprocess(directory, outprefix, fileformat, matrix, separator,
         pass
 
     assembly = "GRCh38"
-    scrna_qc(directory + "/Data", outprefix, fileformat, matrix, separator,
+
+    if mode=='single':
+        scrna_qc(directory + "/Data", outprefix, fileformat, matrix, separator,
              feature, gene_column, barcode, count_cutoff, gene_cutoff,
              cell_cutoff, assembly)
 
-    count_file = os.path.abspath(
+        count_file = os.path.abspath(
         os.path.join(directory + "/Data",
                      outprefix + "_filtered_gene_count.h5"))
 
-    rscript = GenerateRscript(count_file, gene_idtype, assembly, cell_cutoff,
+        rscript = GenerateRscript(count_file, gene_idtype, assembly, cell_cutoff,
                               mito, mito_cutoff, variable_genes, npcs,
-                              cluster_res, outprefix, directory, mode)
+                              cluster_res, outprefix, directory, mode, separator)
+    else:
+        rscript = GenerateRscript(matrix, gene_idtype, assembly, cell_cutoff,
+                              mito, mito_cutoff, variable_genes, npcs,
+                              cluster_res, outprefix, directory, mode, separator)
 
     cmd = "Rscript %s" % (rscript)
     os.system(cmd)

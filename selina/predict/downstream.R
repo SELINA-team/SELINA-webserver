@@ -6,14 +6,14 @@ suppressMessages(library(gtools))
 suppressMessages(library(presto))
 
 option_list <- list(
-    make_option(c('--mode'), type = 'character', help = 'path of celltype'),
-    make_option(c('--seurat'), type = 'character', help = 'path of seurat object'),
-    make_option(c('--pred_label'), type = 'character', help = 'path of predicted cell type'),
-    make_option(c('--pred_prob'), type = 'character', help = 'path of prediction probability'),
-    make_option(c('--cell_cutoff'), type = 'integer', help = 'cutoff for cells with the same cell type in 10 nearest neighbor cells'),
-    make_option(c('--prob_cutoff'), type = 'double', help = 'cutoff for prediction probability'),
-    make_option(c('--path_out'), type = 'character', help = 'path of output'),
-    make_option(c('--outprefix'), type = 'character', help = 'prefix of output files')
+    make_option(c('--mode'), type = 'character', help = 'input file format', default = NULL),
+    make_option(c('--seurat'), type = 'character', help = 'path of seurat object',default = NULL),
+    make_option(c('--pred_label'), type = 'character', help = 'path of predicted cell type',default = NULL),
+    make_option(c('--pred_prob'), type = 'character', help = 'path of prediction probability',default = NULL),
+    make_option(c('--cell_cutoff'), type = 'integer', help = 'cutoff for cells with the same cell type in 10 nearest neighbor cells',default = NULL),
+    make_option(c('--prob_cutoff'), type = 'double', help = 'cutoff for prediction probability',default = NULL),
+    make_option(c('--path_out'), type = 'character', help = 'path of output',default = NULL),
+    make_option(c('--outprefix'), type = 'character', help = 'prefix of output files',default = NULL)
 )
 
 opt_parser <- OptionParser(option_list = option_list);
@@ -27,7 +27,6 @@ cell_cutoff <- opts$cell_cutoff
 prob_cutoff <- opts$prob_cutoff
 path_out <- opts$path_out
 outprefix <- opts$outprefix
-
 
 #find differentially expressed genes
 FindMarkers <- function(object, celltypes, features = NULL, min.pct = 0.1, logfc.threshold = 0.25,
@@ -159,13 +158,13 @@ cluster_quality <- function(SeuratObj,filtered_label,pred_prob,path_out){
   return()
 }
 
-#load data
-SeuratObj <- readRDS(seurat)
 pred_label <- read.table(pred_label, header = FALSE, sep = '\t')[, 1]
 pred_prob <- read.table(pred_prob, header = TRUE, sep = '\t', row.names = 1)
 
 #main step
 if (mode == 'single') {
+  #load data
+  SeuratObj <- readRDS(seurat)
   #filter cells with low prediction score
   filtered_label <- pred_filter(SeuratObj,pred_label,pred_prob,cell_cutoff,prob_cutoff)
   #generate plots and files indicating the prediction quality for each cluster
@@ -180,19 +179,8 @@ if (mode == 'single') {
   p <- DimPlot(object = SeuratObj[,filtered_label!='Unknown'], label = TRUE, pt.size = 0.2, repel = TRUE, group.by = 'pred')
   ggsave(file.path(path_out, paste0(outprefix, "_pred.png")), p, width = 7, height = 5)
   write.table(data.frame(Cell=colnames(SeuratObj),Prediction=filtered_label,Cluster=SeuratObj$seurat_clusters),file.path(path_out, paste0(outprefix, "_predictions.txt")),col.names=TRUE,row.names=FALSE,quote=FALSE,sep='\t')
-
-} else {
-  SeuratObj$pred <- 'pred'
+}  else {
   prob <- apply(pred_prob,MARGIN = 1,max)
   pred_label[prob<prob_cutoff] <- 'Unknown'
-  for (i in 1:length(pred_label)) {
-    SeuratObj$pred[SeuratObj$seurat_clusters == as.character(i - 1)] = pred_label[i]
-  }
-  if (length(unique(SeuratObj$pred[SeuratObj$pred!='Unknown']))>1){
-    cluster.genes <- FindMarkers(object = SeuratObj[,SeuratObj$pred!='Unknown'], celltypes = SeuratObj$pred[SeuratObj$pred!='Unknown'])
-    write.table(cluster.genes, file.path(path_out, paste0(outprefix, "_DiffGenes.tsv")), quote = FALSE, sep = "\t", row.names = FALSE)
-  }
-  p <- DimPlot(object = SeuratObj[,SeuratObj$pred!='Unknown'], label = TRUE, pt.size = 0.2, repel = TRUE, group.by = 'pred')
-  ggsave(file.path(path_out, paste0(outprefix, "_pred.png")), p, width = 7, height = 5)
-  write.table(data.frame(Cell=colnames(SeuratObj),Prediction=SeuratObj$pred,Cluster=SeuratObj$seurat_clusters),file.path(path_out, paste0(outprefix, "_predictions.txt")),col.names=TRUE,row.names=FALSE,quote=FALSE,sep='\t')
+  write.table(data.frame(Cluster=rownames(pred_prob),Prediction=pred_label),file.path(path_out, paste0(outprefix, "_predictions.txt")),col.names=TRUE,row.names=FALSE,quote=FALSE,sep='\t')
 }

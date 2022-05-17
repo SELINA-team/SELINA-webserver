@@ -42,7 +42,8 @@ def predict_parser(subparsers):
                              help='File path of the pre-trained model.')
     group_input.add_argument('--seurat',
                              type=str,
-                             required=True,
+                             required=False,
+                             default="",
                              help='File path of the seurat object.')
     group_input.add_argument(
         '--disease',
@@ -256,11 +257,22 @@ def query_predict(query_expr, model, path_out, outprefix, disease, mode):
 def predict_downstream(mode, seurat, cell_cutoff, prob_cutoff, path_out,
                        outprefix):
     print('Begin downstream analysis')
-    cmd = 'Rscript ' + os.path.split(
-        os.path.abspath(__file__)
-    )[0] + '/downstream.R ' + ' --mode ' + mode + ' --seurat ' + seurat + ' --pred_label ' + path_out + '/' + outprefix + '_predictions.txt' + ' --pred_prob ' + path_out + '/' + outprefix + '_probability.txt' + ' --cell_cutoff ' + str(
-        cell_cutoff) + ' --prob_cutoff ' + str(
-            prob_cutoff
-        ) + ' --path_out ' + path_out + '  --outprefix ' + outprefix
+    if mode == 'single':
+        cmd = 'Rscript ' + os.path.split(
+            os.path.abspath(__file__)
+        )[0] + '/downstream.R ' + ' --mode ' + mode + ' --seurat ' + seurat + ' --pred_label ' + path_out + '/' + outprefix + '_predictions.txt' + ' --pred_prob ' + path_out + '/' + outprefix + '_probability.txt' + ' --cell_cutoff ' + str(
+            cell_cutoff) + ' --prob_cutoff ' + str(
+                prob_cutoff
+            ) + ' --path_out ' + path_out + '  --outprefix ' + outprefix
+    else:
+        cmd = 'Rscript ' + os.path.split(
+            os.path.abspath(__file__)
+        )[0] + '/downstream.R ' + ' --mode ' + mode + ' --pred_label ' + path_out + '/' + outprefix + '_predictions.txt' + ' --pred_prob ' + path_out + '/' + outprefix + '_probability.txt' + ' --prob_cutoff ' + str(
+                prob_cutoff
+            ) + ' --path_out ' + path_out + '  --outprefix ' + outprefix
     os.system(cmd)
     print('Finish downstream analysis')
+
+
+
+
